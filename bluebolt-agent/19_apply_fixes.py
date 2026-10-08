@@ -173,6 +173,8 @@ async def apply_confluence_update(new_body):
                 },
             )
             print(f"Confluence update result isError: {getattr(result, 'isError', 'unknown')}")
+            for block in result.content:
+                print(block.text if hasattr(block, "text") else block)
 
 
 def post_confirmation_and_remove_label(message):
