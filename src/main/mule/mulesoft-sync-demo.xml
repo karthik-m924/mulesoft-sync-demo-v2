@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+	<http:listener-config name="HTTP_Listener_config" doc:name="HTTP Listener config" doc:id="c4efdbf5-c58f-4326-b11c-29def71b79db" >
+		<http:listener-connection host="0.0.0.0" port="8081" />
+	</http:listener-config>
+	<flow name="mulesoft-sync-demoFlow" doc:id="5f86827f-de7e-4ac1-a1f7-b911b7a1a132" >
+		<http:listener doc:name="Listener" doc:id="441f71f4-348a-409f-a1cc-057c8a90600d" config-ref="HTTP_Listener_config" path="/bluebolt-demo"/>
+		<choice doc:name="Choice" doc:id="1aa3b02d-2792-4229-a12d-9e81ecec9f5d" >
+			<when expression="#[true]">
+				<set-payload value="#['Valid Token']" doc:name="Set Payload" doc:id="556cc4ef-8a0b-428f-8ef7-fda4b3f89f1a" />
+			</when>
+			<otherwise >
+				<set-payload value="#['In-Valid Token']" doc:name="Set Payload" doc:id="58a8ddf6-68f2-4218-933e-6bd8cdb5bec3" />
+			</otherwise>
+		</choice>
+	</flow>
+</mule>
