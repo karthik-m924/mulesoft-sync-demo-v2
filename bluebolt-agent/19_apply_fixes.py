@@ -80,15 +80,12 @@ async def fetch_confluence_page():
             await session.initialize()
             result = await session.call_tool(
                 "getConfluencePage",
-                {"cloudId": JIRA_SITE_URL, "pageId": CONFLUENCE_PAGE_ID},
+                {"cloudId": JIRA_SITE_URL, "pageId": CONFLUENCE_PAGE_ID, "includeBody": True},
             )
             return json.loads(result.content[0].text)
 
 
-def strip_html_tags(html_text):
-    text = re.sub(r"<[^>]+>", " ", html_text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+
 
 
 def generate_jira_comment(pr_title, diff_text, ticket_summary, ticket_description):
@@ -155,6 +152,8 @@ async def apply_jira_comment(ticket_key, comment_text):
                 },
             )
             print(f"Jira comment result isError: {getattr(result, 'isError', 'unknown')}")
+            for block in result.content:
+                print(block.text if hasattr(block, "text") else block)
 
 
 async def apply_confluence_update(new_body):
@@ -213,8 +212,7 @@ async def main():
 
     print("Fetching Confluence page...")
     page = await fetch_confluence_page()
-    current_body_html = page.get("body", {}).get("storage", {}).get("value", "")
-    current_body_text = strip_html_tags(current_body_html)
+    current_body_text = page.get("body", "")
 
     print("Generating updated Confluence body...")
     new_body = generate_updated_confluence_body(pr_title, diff_text, current_body_text)
