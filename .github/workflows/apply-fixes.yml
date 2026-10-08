@@ -19,6 +19,13 @@ jobs:
         with:
           ref: main
 
+      - name: Debug - show actual checked out file
+        run: |
+          echo "=== Current commit SHA ==="
+          git rev-parse HEAD
+          echo "=== Confluence-related line in file ==="
+          grep -n "body" bluebolt-agent/19_apply_fixes.py | head -10
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
