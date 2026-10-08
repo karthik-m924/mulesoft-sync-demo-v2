@@ -1,8 +1,17 @@
 """
-Step 7: Apply fixes. Triggered by the 'apply-sync-fixes' label.
-- Jira: adds a flagging COMMENT only, never touches the description
-  (business-owned field).
-- Confluence: full page content update (developer-owned doc).
+Step 7: Apply fixes. Triggered by the 'apply-sync-fixes' label
+(or workflow_dispatch for manual testing).
+
+Jira: posts a plain factual changelog comment (what changed in the
+code) - no judgment, no comparison to the ticket description, never
+touches the description field itself (business-owned).
+
+Confluence: ADDITIVE ONLY. Never removes or rewords existing
+sections (docs-first workflows mean undocumented-but-planned
+functionality is normal, not an error). Only appends new sections
+for functionality the code has that the doc doesn't mention yet.
+A Python-side safety check aborts the write if any original section
+heading would be lost, rather than risk silently dropping content.
 """
 
 import asyncio
@@ -85,48 +94,70 @@ async def fetch_confluence_page():
             return json.loads(result.content[0].text)
 
 
+async def get_html_format_guide():
+    basic_auth = base64.b64encode(f"{ATLASSIAN_EMAIL}:{ATLASSIAN_API_TOKEN}".encode()).decode()
+    headers = {"Authorization": f"Basic {basic_auth}"}
+    async with streamablehttp_client(ATLASSIAN_MCP_URL, headers=headers) as (read, write, _):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool(
+                "getContentFormatGuide",
+                {"toolName": "updateConfluencePage"},
+            )
+            return result.content[0].text
 
 
-
-def generate_jira_comment(pr_title, diff_text, ticket_summary, ticket_description):
+def generate_jira_comment(pr_title, diff_text, ticket_summary):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    prompt = f"""A pull request may have changed functionality not reflected in this Jira ticket.
+    prompt = f"""Summarize, in plain factual language, what this code change adds, removes,
+or modifies. This is a changelog entry for the ticket owner's awareness - NOT a judgment
+about whether it matches the ticket, and NOT a request for them to review anything.
+Do not mention the ticket description at all. Just state what the code now does
+differently, in 2-4 sentences, markdown, no greeting or signature.
 
-Ticket summary: {ticket_summary}
-Ticket description: {ticket_description or '(none)'}
+Ticket: {ticket_summary}
 PR title: {pr_title}
 
 Code diff:
-{diff_text}
-
-Write a short, professional Jira comment (3-5 sentences, markdown) flagging to the
-ticket owner what the code now does that the description doesn't mention, and asking
-them to review whether the description should be updated. Do NOT write a replacement
-description - only flag the discrepancy for the business owner to decide on.
-Do not include a greeting or signature."""
+{diff_text}"""
 
     response = client.messages.create(
-        model="claude-opus-4-6", max_tokens=400,
+        model="claude-opus-4-6", max_tokens=300,
         messages=[{"role": "user", "content": prompt}],
     )
     return response.content[0].text
 
 
-def generate_updated_confluence_body(pr_title, diff_text, current_page_text, format_guide):
+def extract_headings(html_or_text):
+    html_headings = re.findall(r"<h[1-4][^>]*>(.*?)</h[1-4]>", html_or_text, re.IGNORECASE)
+    md_headings = re.findall(r"^#{1,4}\s+(.+)$", html_or_text, re.MULTILINE)
+    combined = html_headings + md_headings
+    return [re.sub(r"<[^>]+>", "", h).strip() for h in combined]
+
+
+def generate_additive_confluence_body(pr_title, diff_text, current_page_text, format_guide):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    prompt = f"""This Confluence page documents a MuleSoft flow. The code has changed.
-Produce a FULL corrected version of the page content, in simple HTML, that accurately
-reflects the current code. Use only basic tags: <h2>, <p>, <table>/<tr>/<td>, <strong>.
-Do NOT use emoji icons, macros, or panels - plain structural HTML only.
+    prompt = f"""This Confluence page documents a MuleSoft flow. The code may have added
+functionality not yet documented here.
+
+CRITICAL RULES:
+1. Do NOT remove, reword, or shorten ANY existing section. Documentation often describes
+   planned functionality written before the code - a section describing something not
+   yet in the code is normal and must be preserved exactly as-is.
+2. ONLY add new section(s) for functionality present in the code diff that is not already
+   described anywhere in the existing content.
+3. If the diff adds nothing new that isn't already documented, return the existing content
+   completely unchanged.
+
+Use only basic HTML tags: <h2>, <p>, <table>/<tr>/<td>, <strong>. No emoji icons, macros, or panels.
 Follow this formatting guidance:
 
 {format_guide}
 
-Keep existing sections where still accurate. Remove sections describing functionality
-that no longer exists in the code. Add sections for new functionality.
-Output ONLY the full replacement page body as HTML - no commentary, no markdown fences.
+Output ONLY the full page body as HTML (existing content + any new section appended) -
+no commentary, no markdown fences.
 
-Current page content:
+Existing page content:
 {current_page_text}
 
 PR title: {pr_title}
@@ -135,7 +166,7 @@ Code diff:
 {diff_text}"""
 
     response = client.messages.create(
-        model="claude-opus-4-6", max_tokens=1500,
+        model="claude-opus-4-6", max_tokens=2000,
         messages=[{"role": "user", "content": prompt}],
     )
     return response.content[0].text
@@ -152,7 +183,7 @@ async def apply_jira_comment(ticket_key, comment_text):
                 {
                     "cloudId": JIRA_SITE_URL,
                     "issueIdOrKey": ticket_key,
-                    "commentBody": f"**Bluebolt Sync Check**\n\n{comment_text}",
+                    "commentBody": f"**Bluebolt Sync Check - Code Changelog**\n\n{comment_text}",
                     "contentFormat": "markdown",
                 },
             )
@@ -174,7 +205,7 @@ async def apply_confluence_update(new_body):
                     "pageId": CONFLUENCE_PAGE_ID,
                     "body": new_body,
                     "contentFormat": "html",
-                    "versionMessage": "Auto-updated by Bluebolt sync check",
+                    "versionMessage": "Auto-updated by Bluebolt sync check (additive only)",
                 },
             )
             print(f"Confluence update result isError: {getattr(result, 'isError', 'unknown')}")
@@ -196,17 +227,7 @@ def post_confirmation_and_remove_label(message):
         f"https://api.github.com/repos/{OWNER}/{REPO}/issues/{PR_NUMBER}/labels/apply-sync-fixes",
         headers=headers,
     )
-async def get_html_format_guide():
-    basic_auth = base64.b64encode(f"{ATLASSIAN_EMAIL}:{ATLASSIAN_API_TOKEN}".encode()).decode()
-    headers = {"Authorization": f"Basic {basic_auth}"}
-    async with streamablehttp_client(ATLASSIAN_MCP_URL, headers=headers) as (read, write, _):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            result = await session.call_tool(
-                "getContentFormatGuide",
-                {"toolName": "updateConfluencePage"},
-            )
-            return result.content[0].text
+
 
 async def main():
     print("Fetching PR title + diff...")
@@ -221,10 +242,9 @@ async def main():
     print("Fetching Jira issue...")
     issue = await fetch_jira_issue(ticket_key)
     summary = issue.get("fields", {}).get("summary", "")
-    description = issue.get("fields", {}).get("description", "")
 
-    print("Generating Jira comment...")
-    jira_comment = generate_jira_comment(pr_title, diff_text, summary, description)
+    print("Generating Jira changelog comment...")
+    jira_comment = generate_jira_comment(pr_title, diff_text, summary)
     await apply_jira_comment(ticket_key, jira_comment)
 
     print("Fetching Confluence page...")
@@ -234,16 +254,34 @@ async def main():
     print("Fetching HTML format guide...")
     format_guide = await get_html_format_guide()
 
-    print("Generating updated Confluence body...")
-    new_body = generate_updated_confluence_body(pr_title, diff_text, current_body_text, format_guide)
-    await apply_confluence_update(new_body)
+    print("Generating additive Confluence update...")
+    new_body = generate_additive_confluence_body(pr_title, diff_text, current_body_text, format_guide)
+
+    original_headings = set(extract_headings(current_body_text))
+    new_headings = set(extract_headings(new_body))
+    missing = original_headings - new_headings
+
+    confluence_applied = False
+    if missing:
+        print(f"SAFETY ABORT: Confluence update would drop existing sections: {missing}")
+        print("Skipping Confluence write to avoid data loss.")
+    else:
+        await apply_confluence_update(new_body)
+        confluence_applied = True
 
     print("Posting confirmation comment...")
+    confluence_line = (
+        f"- \U0001F4D8 Updated [Confluence page]({CONFLUENCE_PAGE_URL}) with new content only "
+        f"(existing sections preserved)"
+        if confluence_applied
+        else f"- \u26A0\uFE0F Confluence update skipped - would have removed existing content, review manually: "
+             f"[Confluence page]({CONFLUENCE_PAGE_URL})"
+    )
     post_confirmation_and_remove_label(
-        f"**🤖 Bluebolt Sync Fixes Applied**\n\n"
-        f"- 🎫 Added a flag comment on [{ticket_key}]({JIRA_SITE_URL}/browse/{ticket_key}) "
-        f"for the ticket owner to review (description left untouched - business-owned field)\n"
-        f"- 📘 Updated [Confluence page]({CONFLUENCE_PAGE_URL}) to match current code"
+        f"**\U0001F916 Bluebolt Sync Fixes Applied**\n\n"
+        f"- \U0001F3AB Added a changelog comment on [{ticket_key}]({JIRA_SITE_URL}/browse/{ticket_key}) "
+        f"(description left untouched - business-owned field)\n"
+        f"{confluence_line}"
     )
     print("Done.")
 
