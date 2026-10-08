@@ -20,11 +20,24 @@ permissions:
   issues: write
 
 jobs:
+  debug-check:
+    if: github.event_name == 'issue_comment'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Show comment info
+        run: |
+          echo "Comment author: ${{ github.event.comment.user.login }}"
+          echo "Contains [x]: ${{ contains(github.event.comment.body, '[x]') }}"
+          echo "Contains Click to apply: ${{ contains(github.event.comment.body, 'Click to apply') }}"
+          echo "--- Full body ---"
+          echo "${{ github.event.comment.body }}"
+
   apply-fixes:
     if: >
       github.event_name == 'workflow_dispatch' ||
       (github.event.comment.user.login == 'github-actions[bot]' &&
-       contains(github.event.comment.body, '- [x] ✅ Click to apply'))
+       contains(github.event.comment.body, '[x]') &&
+       contains(github.event.comment.body, 'Click to apply'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
