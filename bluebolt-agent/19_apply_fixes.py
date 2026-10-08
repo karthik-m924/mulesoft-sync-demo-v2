@@ -112,14 +112,19 @@ Do not include a greeting or signature."""
     return response.content[0].text
 
 
-def generate_updated_confluence_body(pr_title, diff_text, current_page_text):
+def generate_updated_confluence_body(pr_title, diff_text, current_page_text, format_guide):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     prompt = f"""This Confluence page documents a MuleSoft flow. The code has changed.
-Produce a FULL corrected version of the page content, in markdown, that accurately
-reflects the current code. Keep the existing structure and sections where still
-accurate. Remove sections describing functionality that no longer exists in the
-code. Add sections for new functionality the code now has. Output ONLY the full
-replacement page content in markdown - no commentary, no explanation.
+Produce a FULL corrected version of the page content, in simple HTML, that accurately
+reflects the current code. Use only basic tags: <h2>, <p>, <table>/<tr>/<td>, <strong>.
+Do NOT use emoji icons, macros, or panels - plain structural HTML only.
+Follow this formatting guidance:
+
+{format_guide}
+
+Keep existing sections where still accurate. Remove sections describing functionality
+that no longer exists in the code. Add sections for new functionality.
+Output ONLY the full replacement page body as HTML - no commentary, no markdown fences.
 
 Current page content:
 {current_page_text}
@@ -168,7 +173,7 @@ async def apply_confluence_update(new_body):
                     "cloudId": JIRA_SITE_URL,
                     "pageId": CONFLUENCE_PAGE_ID,
                     "body": new_body,
-                    "contentFormat": "markdown",
+                    "contentFormat": "html",
                     "versionMessage": "Auto-updated by Bluebolt sync check",
                 },
             )
@@ -191,7 +196,17 @@ def post_confirmation_and_remove_label(message):
         f"https://api.github.com/repos/{OWNER}/{REPO}/issues/{PR_NUMBER}/labels/apply-sync-fixes",
         headers=headers,
     )
-
+async def get_html_format_guide():
+    basic_auth = base64.b64encode(f"{ATLASSIAN_EMAIL}:{ATLASSIAN_API_TOKEN}".encode()).decode()
+    headers = {"Authorization": f"Basic {basic_auth}"}
+    async with streamablehttp_client(ATLASSIAN_MCP_URL, headers=headers) as (read, write, _):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool(
+                "getContentFormatGuide",
+                {"toolName": "updateConfluencePage"},
+            )
+            return result.content[0].text
 
 async def main():
     print("Fetching PR title + diff...")
@@ -216,8 +231,11 @@ async def main():
     page = await fetch_confluence_page()
     current_body_text = page.get("body", "")
 
+    print("Fetching HTML format guide...")
+    format_guide = await get_html_format_guide()
+
     print("Generating updated Confluence body...")
-    new_body = generate_updated_confluence_body(pr_title, diff_text, current_body_text)
+    new_body = generate_updated_confluence_body(pr_title, diff_text, current_body_text, format_guide)
     await apply_confluence_update(new_body)
 
     print("Posting confirmation comment...")
