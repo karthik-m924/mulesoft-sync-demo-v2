@@ -1,7 +1,7 @@
 """
-Step 6 (v5): Core sync engine with Jira AND Confluence checks.
-Confluence uses a direct page fetch (not RAG) since this demo
-has one known page - see conversation for when RAG would be needed.
+Step 6 (v6): Core sync engine with a status-badge summary table,
+collapsible details per source, and a clickable checkbox in the
+comment itself to trigger the apply-fixes workflow.
 """
 
 import asyncio
@@ -25,13 +25,12 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 GITHUB_MCP_URL = "https://api.githubcopilot.com/mcp/"
 ATLASSIAN_MCP_URL = "https://mcp.atlassian.com/v1/mcp"
 JIRA_SITE_URL = "https://karthik-agents.atlassian.net"
-CONFLUENCE_PAGE_URL = "https://karthik-agents.atlassian.net/wiki/spaces/~712020e1ca0537a9cd4f209fef57ee150169be/pages/4751361/Login+Flow+-+Technical+Design"
 
 GH_REPOSITORY = os.getenv("GH_REPOSITORY")
 if GH_REPOSITORY:
     OWNER, REPO = GH_REPOSITORY.split("/")
 else:
-    OWNER, REPO = "karthik-m924", "mulesoft-sync-demo"
+    OWNER, REPO = "karthik-m924", "mulesoft-sync-demo-v2"
 
 PR_NUMBER = int(os.getenv("GH_PR_NUMBER", "1"))
 
@@ -60,7 +59,6 @@ async def fetch_pr_title_and_diff():
 async def fetch_atlassian_object(object_url):
     basic_auth = base64.b64encode(f"{ATLASSIAN_EMAIL}:{ATLASSIAN_API_TOKEN}".encode()).decode()
     headers = {"Authorization": f"Basic {basic_auth}"}
-
     async with streamablehttp_client(ATLASSIAN_MCP_URL, headers=headers) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()
@@ -72,19 +70,10 @@ async def fetch_atlassian_object(object_url):
             return data["data"]["data"]["objects"][0]["raw"]
 
 
-def strip_html_tags(html_text):
-    # Quick cleanup so Claude sees readable text, not raw markup noise
-    text = re.sub(r"<[^>]+>", " ", html_text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
-
-def run_consistency_check(source_label, source_content, pr_title, diff_text, extra_context=""):
+def run_consistency_check(source_label, source_content, pr_title, diff_text):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     prompt = f"""You are reviewing whether a {source_label} document still accurately describes a code change.
-
-{extra_context}
 
 {source_label} content:
 {source_content}
@@ -124,8 +113,7 @@ Only include this section when STATUS is OUT_OF_SYNC.
 """
 
     response = client.messages.create(
-        model="claude-opus-4-6",
-        max_tokens=1000,
+        model="claude-opus-4-6", max_tokens=1000,
         messages=[{"role": "user", "content": prompt}],
     )
     return response.content[0].text
@@ -153,7 +141,8 @@ async def post_pr_comment(jira_status, jira_body, ticket_key, confluence_status,
         f"| \U0001F3AB Jira | {jira_badge} | [{ticket_key}]({jira_link}) |\n"
         f"| \U0001F4D8 Confluence | {confluence_badge} | [Login Flow - Technical Design]({confluence_url}) |\n\n"
         f"<details>\n<summary>\U0001F50D Jira comparison details</summary>\n\n{jira_body}\n\n</details>\n\n"
-        f"<details>\n<summary>\U0001F50D Confluence comparison details</summary>\n\n{confluence_body}\n\n</details>\n"
+        f"<details>\n<summary>\U0001F50D Confluence comparison details</summary>\n\n{confluence_body}\n\n</details>\n\n"
+        f"---\n\n- [ ] \u2705 Click to apply these fixes to Jira & Confluence\n"
     )
 
     headers = {"Authorization": f"Bearer {GITHUB_TOKEN}"}
@@ -194,8 +183,9 @@ Description: {ticket.get('description') or '(no description)'}"""
     print(f"Jira status: {jira_status}\n")
 
     print("Fetching Confluence page...")
-    page = await fetch_atlassian_object(CONFLUENCE_PAGE_URL)
-    page_text = strip_html_tags(page["content"]["storage"]["value"])
+    confluence_page_url = "https://karthik-agents.atlassian.net/wiki/spaces/~712020e1ca0537a9cd4f209fef57ee150169be/pages/4751361/Login+Flow+-+Technical+Design"
+    page = await fetch_atlassian_object(confluence_page_url)
+    page_text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", page["content"]["storage"]["value"])).strip()
     print(f"Page title: {page['title']}\n")
 
     print("Checking Confluence consistency...")
@@ -205,7 +195,7 @@ Description: {ticket.get('description') or '(no description)'}"""
 
     await post_pr_comment(
         jira_status, jira_body, ticket_key,
-        confluence_status, confluence_body, CONFLUENCE_PAGE_URL,
+        confluence_status, confluence_body, confluence_page_url,
     )
 
 
