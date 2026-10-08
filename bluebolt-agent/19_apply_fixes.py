@@ -1,6 +1,6 @@
 """
-Step 7: Apply fixes. Triggered by the 'apply-sync-fixes' label
-(or workflow_dispatch for manual testing).
+Step 7: Apply fixes. Triggered by checking the checkbox in the
+sync-check comment (or workflow_dispatch for manual testing).
 
 Jira: posts a plain factual changelog comment (what changed in the
 code) - no judgment, no comparison to the ticket description, never
@@ -46,6 +46,7 @@ else:
     OWNER, REPO = "karthik-m924", "mulesoft-sync-demo-v2"
 
 PR_NUMBER = int(os.getenv("GH_PR_NUMBER", "1"))
+GH_COMMENT_ID = os.getenv("GH_COMMENT_ID", "")
 
 TICKET_KEY_PATTERN = re.compile(r"^([A-Z]+-\d+):\s*(.+)$")
 
@@ -213,7 +214,7 @@ async def apply_confluence_update(new_body):
                 print(block.text if hasattr(block, "text") else block)
 
 
-def post_confirmation_and_remove_label(message):
+def post_confirmation_comment(message):
     headers = {
         "Authorization": f"Bearer {GITHUB_TOKEN}",
         "Accept": "application/vnd.github+json",
@@ -223,10 +224,32 @@ def post_confirmation_and_remove_label(message):
         headers=headers,
         json={"body": message},
     )
-    requests.delete(
-        f"https://api.github.com/repos/{OWNER}/{REPO}/issues/{PR_NUMBER}/labels/apply-sync-fixes",
+
+
+def mark_comment_applied():
+    if not GH_COMMENT_ID:
+        print("No comment ID provided (manual test run) - skipping comment update.")
+        return
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+    }
+    get_resp = requests.get(
+        f"https://api.github.com/repos/{OWNER}/{REPO}/issues/comments/{GH_COMMENT_ID}",
         headers=headers,
     )
+    get_resp.raise_for_status()
+    current_body = get_resp.json()["body"]
+    updated_body = current_body.replace(
+        "- [x] \u2705 Click to apply these fixes to Jira & Confluence",
+        "- [x] \u2705 Applied",
+    )
+    requests.patch(
+        f"https://api.github.com/repos/{OWNER}/{REPO}/issues/comments/{GH_COMMENT_ID}",
+        headers=headers,
+        json={"body": updated_body},
+    )
+    print("Comment updated to show 'Applied'.")
 
 
 async def main():
@@ -277,12 +300,14 @@ async def main():
         else f"- \u26A0\uFE0F Confluence update skipped - would have removed existing content, review manually: "
              f"[Confluence page]({CONFLUENCE_PAGE_URL})"
     )
-    post_confirmation_and_remove_label(
+    post_confirmation_comment(
         f"**\U0001F916 Bluebolt Sync Fixes Applied**\n\n"
         f"- \U0001F3AB Added a changelog comment on [{ticket_key}]({JIRA_SITE_URL}/browse/{ticket_key}) "
         f"(description left untouched - business-owned field)\n"
         f"{confluence_line}"
     )
+
+    mark_comment_applied()
     print("Done.")
 
 
