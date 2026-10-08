@@ -3,6 +3,12 @@ name: Bluebolt Apply Fixes
 on:
   pull_request:
     types: [labeled]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to apply fixes for'
+        required: true
+        default: '1'
 
 permissions:
   contents: read
@@ -11,7 +17,7 @@ permissions:
 
 jobs:
   apply-fixes:
-    if: github.event.label.name == 'apply-sync-fixes'
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'apply-sync-fixes'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -41,5 +47,5 @@ jobs:
           ATLASSIAN_EMAIL: ${{ secrets.ATLASSIAN_EMAIL }}
           ATLASSIAN_API_TOKEN: ${{ secrets.ATLASSIAN_API_TOKEN }}
           GH_REPOSITORY: ${{ github.repository }}
-          GH_PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.pull_request.number }}
         run: python bluebolt-agent/19_apply_fixes.py
