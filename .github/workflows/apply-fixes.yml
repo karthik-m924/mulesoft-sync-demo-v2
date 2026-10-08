@@ -1,14 +1,18 @@
 name: Bluebolt Apply Fixes
 
 on:
-  pull_request:
-    types: [labeled]
+  issue_comment:
+    types: [edited]
   workflow_dispatch:
     inputs:
       pr_number:
-        description: 'PR number to apply fixes for'
+        description: 'PR number'
         required: true
         default: '1'
+      comment_id:
+        description: 'Comment ID (leave blank for workflow_dispatch testing)'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -17,20 +21,16 @@ permissions:
 
 jobs:
   apply-fixes:
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'apply-sync-fixes'
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.comment.user.login == 'github-actions[bot]' &&
+       contains(github.event.comment.body, '- [x] ✅ Click to apply'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: main
-
-      - name: Debug - show actual checked out file
-        run: |
-          echo "=== Current commit SHA ==="
-          git rev-parse HEAD
-          echo "=== Confluence-related line in file ==="
-          grep -n "body" bluebolt-agent/19_apply_fixes.py | head -10
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -47,5 +47,6 @@ jobs:
           ATLASSIAN_EMAIL: ${{ secrets.ATLASSIAN_EMAIL }}
           ATLASSIAN_API_TOKEN: ${{ secrets.ATLASSIAN_API_TOKEN }}
           GH_REPOSITORY: ${{ github.repository }}
-          GH_PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.pull_request.number }}
+          GH_PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.issue.number }}
+          GH_COMMENT_ID: ${{ github.event.inputs.comment_id || github.event.comment.id }}
         run: python bluebolt-agent/19_apply_fixes.py
