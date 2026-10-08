@@ -1,0 +1,36 @@
+name: Bluebolt Apply Fixes
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  apply-fixes:
+    if: github.event.label.name == 'apply-sync-fixes'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install anthropic mcp==1.28.1 python-dotenv requests
+
+      - name: Apply fixes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ATLASSIAN_EMAIL: ${{ secrets.ATLASSIAN_EMAIL }}
+          ATLASSIAN_API_TOKEN: ${{ secrets.ATLASSIAN_API_TOKEN }}
+          GH_REPOSITORY: ${{ github.repository }}
+          GH_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python bluebolt-agent/19_apply_fixes.py
