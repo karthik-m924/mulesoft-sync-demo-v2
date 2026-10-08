@@ -19,3 +19,9 @@ http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/htt
 		</choice>
 	</flow>
 </mule>
+
+<!-- v2 test trigger -->
+
+<!-- refresh merge snapshot -->
+
+<!-- checkbox trigger test -->
